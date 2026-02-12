@@ -48,6 +48,15 @@ const parseList = (value: string) =>
 
 const formatList = (values: string[]) => values.join(', ')
 
+const applyDropdownSelection = (current: string, nextValue: string) => {
+  const parts = current.split(',')
+  if (parts.length <= 1) {
+    return nextValue
+  }
+  parts[parts.length - 1] = ` ${nextValue}`
+  return parts.join(',').replace(/\s*,\s*/g, ', ')
+}
+
 const columnLabels: { key: keyof Client; label: string; type: 'text' | 'boolean' }[] = [
   { key: 'client_name', label: 'Client Name', type: 'text' },
   { key: 'tickers', label: 'Tickers', type: 'text' },
@@ -84,6 +93,8 @@ function App() {
     currencies: '',
     region: '',
   })
+  const [tickerOpen, setTickerOpen] = useState(false)
+  const [currencyOpen, setCurrencyOpen] = useState(false)
 
   const uniqueTickers = useMemo(() => {
     const set = new Set<string>()
@@ -217,6 +228,27 @@ function App() {
     }
   }
 
+  const handleDeleteSelected = async () => {
+    if (!selectedClientId) return
+    const confirmed = window.confirm('Delete this client? This cannot be undone.')
+    if (!confirmed) return
+
+    setError(null)
+    try {
+      const response = await fetch(`${API_BASE}/clients/${selectedClientId}`, {
+        method: 'DELETE',
+      })
+      if (!response.ok) {
+        throw new Error('Delete failed.')
+      }
+      setClients((current) => current.filter((item) => item.id !== selectedClientId))
+      setSelectedClientId(null)
+      setAuditItems([])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Delete failed.')
+    }
+  }
+
   return (
     <div className="page">
       <header className="page-header">
@@ -224,8 +256,8 @@ function App() {
           <p className="eyebrow">Client Trading Preferences</p>
           <h1>Client Data Console</h1>
           <p className="subhead">
-            Search across client names and tickers, filter by categories, and edit inline. No
-            filters are saved to the database.
+            Search by client name, filter by categories, and edit inline. No filters are saved to
+            the database.
           </p>
         </div>
         <div className="status">
@@ -355,43 +387,87 @@ function App() {
 
       <section className="filters">
         <div className="field">
-          <label htmlFor="search">Text Search</label>
+          <label htmlFor="search">Search Client</label>
           <input
             id="search"
-            placeholder="Search client or ticker (e.g., AAPL)"
+            placeholder="Search client name (e.g., RBIB)"
             value={filters.q}
             onChange={(event) => setFilters((prev) => ({ ...prev, q: event.target.value }))}
           />
         </div>
         <div className="field">
           <label htmlFor="ticker">Ticker</label>
-          <input
-            id="ticker"
-            list="tickers"
-            placeholder="Filter by ticker(s) e.g. AAPL, NVDA"
-            value={filters.ticker}
-            onChange={(event) => setFilters((prev) => ({ ...prev, ticker: event.target.value }))}
-          />
-          <datalist id="tickers">
-            {uniqueTickers.map((ticker) => (
-              <option key={ticker} value={ticker} />
-            ))}
-          </datalist>
+          <div className="dropdown">
+            <input
+              id="ticker"
+              placeholder="Filter by ticker(s) e.g. AAPL, NVDA"
+              value={filters.ticker}
+              onFocus={() => setTickerOpen(true)}
+              onBlur={() => setTickerOpen(false)}
+              onChange={(event) => setFilters((prev) => ({ ...prev, ticker: event.target.value }))}
+            />
+            {tickerOpen ? (
+              <div className="dropdown-menu">
+                {uniqueTickers.map((ticker) => (
+                  <button
+                    type="button"
+                    key={ticker}
+                    className="dropdown-item"
+                    onMouseDown={(event) => {
+                      event.preventDefault()
+                      setFilters((prev) => ({
+                        ...prev,
+                        ticker: applyDropdownSelection(prev.ticker, ticker),
+                      }))
+                    }}
+                  >
+                    {ticker}
+                  </button>
+                ))}
+                {uniqueTickers.length === 0 ? (
+                  <div className="dropdown-empty">No tickers yet</div>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
         </div>
         <div className="field">
           <label htmlFor="currency">Currency</label>
-          <input
-            id="currency"
-            list="currencies"
-            placeholder="Filter by currency(s) e.g. USD, EUR"
-            value={filters.currency}
-            onChange={(event) => setFilters((prev) => ({ ...prev, currency: event.target.value }))}
-          />
-          <datalist id="currencies">
-            {uniqueCurrencies.map((currency) => (
-              <option key={currency} value={currency} />
-            ))}
-          </datalist>
+          <div className="dropdown">
+            <input
+              id="currency"
+              placeholder="Filter by currency(s) e.g. USD, EUR"
+              value={filters.currency}
+              onFocus={() => setCurrencyOpen(true)}
+              onBlur={() => setCurrencyOpen(false)}
+              onChange={(event) =>
+                setFilters((prev) => ({ ...prev, currency: event.target.value }))
+              }
+            />
+            {currencyOpen ? (
+              <div className="dropdown-menu">
+                {uniqueCurrencies.map((currency) => (
+                  <button
+                    type="button"
+                    key={currency}
+                    className="dropdown-item"
+                    onMouseDown={(event) => {
+                      event.preventDefault()
+                      setFilters((prev) => ({
+                        ...prev,
+                        currency: applyDropdownSelection(prev.currency, currency),
+                      }))
+                    }}
+                  >
+                    {currency}
+                  </button>
+                ))}
+                {uniqueCurrencies.length === 0 ? (
+                  <div className="dropdown-empty">No currencies yet</div>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
         </div>
         <div className="actions">
           <button onClick={() => fetchClients()} className="primary">
@@ -488,11 +564,16 @@ function App() {
           <aside className="audit-panel">
             <div className="audit-header">
               <h2>Audit History</h2>
-              {selectedClientId ? (
-                <span className="pill">Client selected</span>
-              ) : (
-                <span className="pill warning">No client selected</span>
-              )}
+              <div className="audit-actions">
+                {selectedClientId ? <span className="pill">Client selected</span> : null}
+                {selectedClientId ? (
+                  <button type="button" className="danger-btn" onClick={handleDeleteSelected}>
+                    Delete Client
+                  </button>
+                ) : (
+                  <span className="pill warning">No client selected</span>
+                )}
+              </div>
             </div>
             {auditLoading ? (
               <p className="audit-muted">Loading audit history…</p>

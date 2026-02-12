@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import joinedload
 from sqlalchemy import func
@@ -47,7 +47,7 @@ def _normalize_list(values: Optional[Iterable[str]]) -> List[str]:
 
 @app.get("/clients", response_model=ClientListResponse)
 def list_clients(
-    q: Optional[str] = Query(None, description="Text search across client name and tickers"),
+    q: Optional[str] = Query(None, description="Search by client name"),
     ticker: Optional[str] = Query(None, description="Filter by ticker symbol(s), comma-separated"),
     currency: Optional[str] = Query(None, description="Filter by currency code(s), comma-separated"),
 ):
@@ -77,9 +77,7 @@ def list_clients(
                 )
         if q:
             q_like = f"%{q}%"
-            query = query.outerjoin(Client.tickers).filter(
-                (Client.client_name.ilike(q_like)) | (Ticker.symbol.ilike(q_like))
-            )
+            query = query.filter(Client.client_name.ilike(q_like))
 
         clients = query.distinct().all()
 
@@ -89,8 +87,8 @@ def list_clients(
                 ClientOut(
                     id=str(client.id),
                     client_name=client.client_name,
-                    tickers=[t.symbol for t in client.tickers],
-                    currencies=[c.code for c in client.currencies],
+                    tickers=sorted([t.symbol for t in client.tickers]),
+                    currencies=sorted([c.code for c in client.currencies]),
                     tenors_min=client.tenors_min,
                     tenors_max=client.tenors_max,
                     tenors_sweetspot=client.tenors_sweetspot,
@@ -159,8 +157,8 @@ def create_client(payload: ClientCreate):
         return ClientOut(
             id=str(client.id),
             client_name=client.client_name,
-            tickers=[t.symbol for t in client.tickers],
-            currencies=[c.code for c in client.currencies],
+            tickers=sorted([t.symbol for t in client.tickers]),
+            currencies=sorted([c.code for c in client.currencies]),
             tenors_min=client.tenors_min,
             tenors_max=client.tenors_max,
             tenors_sweetspot=client.tenors_sweetspot,
@@ -266,6 +264,17 @@ def update_client(client_id: str, payload: ClientUpdate):
             client_notes=client.client_notes,
             region=client.region,
         )
+
+
+@app.delete("/clients/{client_id}", status_code=204)
+def delete_client(client_id: str):
+    with get_db_session() as session:
+        client = session.query(Client).filter(Client.id == client_id).first()
+        if not client:
+            raise HTTPException(status_code=404, detail="Client not found")
+        session.delete(client)
+        session.commit()
+    return Response(status_code=204)
 
 @app.get("/clients/{client_id}/audit", response_model=AuditListResponse)
 def client_audit(client_id: str):
